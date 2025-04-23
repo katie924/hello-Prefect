@@ -1,0 +1,14 @@
+version: "3.8"
+
+services:
+  prefect:
+    build: .
+    container_name: prefect-etl
+    ports:
+      - "4200:4200"  # Prefect UI
+    volumes:
+      - .:/app
+    environment:
+      - PREFECT_API_URL=http://localhost:4200/api
+      - PYTHONPATH=/app
+    command: ["prefect", "server", "start", "--host", "0.0.0.0"]
