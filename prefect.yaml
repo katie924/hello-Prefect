@@ -1,0 +1,17 @@
+name: my-etl-project
+prefect-version: 3.3.5
+
+deployments:
+  - name: hello-deploy
+    entrypoint: flows/flow1.py:hello_flow
+    parameters: {}
+    work_pool:
+      name: default-process-pool
+      work_queue_name: default
+
+  - name: another-deploy
+    entrypoint: flows/flow2.py:hello_flow
+    parameters: {}
+    work_pool:
+      name: default-process-pool
+      work_queue_name: default
