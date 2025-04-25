@@ -11,7 +11,7 @@
 2. 進入容器，確認版本 `prefect version`
     
     ```powershell
-    docker exec -it prefect-server bash
+    docker exec -it prefect-etl bash
     ```
     
     - 若要測試 flow

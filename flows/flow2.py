@@ -2,13 +2,12 @@ from prefect import flow, task
 from subflows.say_hello import say_hello
 
 
-@task
-def tenant():
-    print("It's tenant2.")
-
-
 @flow(name="Another Flow")
 def hello_flow():
+    @task
+    def tenant():
+        print("It's tenant2.")
+
     tenant()
     say_hello("World!!")
 
