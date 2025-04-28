@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pdb
+
+# Virtual environments (如果有用 venv、.venv 等)
+venv/
+.venv/
+env/
+.env/
+
+# IDE / Editor specific
+.vscode/
+.idea/
+*.swp
+*.swo
+*.bak
+
+# Docker
+*.log
+*.pid
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Prefect specific (假設你有使用 Prefect 儲存 task 狀態)
+.prefect/
+
+# Coverage / Testing
+htmlcov/
+.tox/
+.nox/
+.coverage
+coverage.xml
+*.cover
+.pytest_cache/
+
+# Miscellaneous
+*.sqlite3
+*.db
