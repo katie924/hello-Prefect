@@ -8,6 +8,8 @@ services:
       - "4200:4200"  # Prefect UI
     volumes:
       - .:/app
+    env_file:
+      - .env
     environment:
       - PREFECT_API_URL=http://localhost:4200/api
       - PYTHONPATH=/app
