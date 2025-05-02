@@ -4,7 +4,7 @@ import json
 from lib.utils import connect_post, website_boolean, pd_append_sql
 
 rename_order = {'order_id': 'orders'}
-idx_web = ['date', 'website_id']
+idx_web = ['date', 'website_name']
 idx_online = ['date', 'is_online']
 
 
@@ -30,7 +30,7 @@ class BasicData:
 
     def load_member_data(self, con):
         sql = '''
-        SELECT member_id, city, region, register_date AS date, gender, birth_date, website_id
+        SELECT member_id, city, region, register_date AS date, gender, birth_date, website_name
         FROM info.member_info
         WHERE is_member = true;
         '''
@@ -72,7 +72,7 @@ def revenue_overview(con, order_data, member_data):
 
     df_m = member_data.groupby(idx_web)['member_id'].agg('count')\
         .reset_index().rename(columns={'member_id': 'new_member_count'})
-    df_m['member_count'] = df_m.groupby('website_id')['new_member_count'].cumsum()
+    df_m['member_count'] = df_m.groupby('website_name')['new_member_count'].cumsum()
 
     df_final = df_r.merge(df_m, on=idx_web, how='right').fillna(0)
 
@@ -98,13 +98,13 @@ def region_revenue(con, order_data_member, member_data):
 
 def source_revenue(con, order_data_member, order_data):
     df1 = (
-        order_data_member.query('website_id != 0')
+        order_data_member.query('website_name != "0"')
         .groupby(['date', 'source'], as_index=False)['revenue'].sum()
         .assign(is_online=True)
     )
 
     df2 = (
-        order_data.query('website_id == 0')
+        order_data.query('website_name == "0"')
         .groupby(['date', 'is_member'], as_index=False)['revenue'].sum()
         .assign(
             source=lambda d: d['is_member'].map({True: '會員', False: '非會員'}),
@@ -118,7 +118,7 @@ def source_revenue(con, order_data_member, order_data):
 
 
 def store_revenue(con, order_data):
-    df_final = order_data.query('website_id == 0')\
+    df_final = order_data.query('website_name == "0"')\
         .groupby(['date', 'source'], as_index=False)['revenue'].sum()\
         .rename(columns={'source': 'store_id'})
 
@@ -138,7 +138,7 @@ def member_order_interval(con, order_data_member):
     df.sort_values(by=['member_id', 'date'], inplace=True)
     df['prev_date'] = df.groupby('member_id')['date'].shift()
     df['interval_all'] = (df['date'] - df['prev_date']).dt.days
-    df['prev_date'] = df.groupby(['member_id', 'website_id'])['date'].shift()
+    df['prev_date'] = df.groupby(['member_id', 'website_name'])['date'].shift()
     df['interval'] = (df['date'] - df['prev_date']).dt.days
     df_final = df.drop(columns=['order_id', 'prev_date'])\
         .sort_values(by=['date', 'member_id'])
@@ -152,7 +152,7 @@ def daily_members(con, order_data_member, member_data):
     df_c = order_data_member\
         .groupby(idx_web).agg({'member_id': list}).reset_index()
 
-    sql = '''SELECT date, website_id, member_count FROM metric.revenue_overview;'''
+    sql = '''SELECT date, website_name, member_count FROM metric.revenue_overview;'''
     df_revenue = pd.read_sql(sql, con, parse_dates='date')
 
     df_final = df_m.merge(df_c, on=idx_web, how='left')\
