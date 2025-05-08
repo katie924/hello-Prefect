@@ -1,6 +1,6 @@
 import pandas as pd
 
-from lib.utils import connect_post, website_boolean, pd_append_sql
+from lib.utils import connect_post, website_boolean, pd_append_sql, assign_age_group
 
 rename_order = {'order_id': 'orders'}
 idx_web = ['date', 'website_name']
@@ -70,9 +70,8 @@ def revenue_overview(con, order_data, member_data):
 
     df_m = member_data.groupby(idx_web)['member_id'].agg('count')\
         .reset_index().rename(columns={'member_id': 'new_member_count'})
-    df_m['member_count'] = df_m.groupby('website_name')['new_member_count'].cumsum()
-
-    df_final = df_r.merge(df_m, on=idx_web, how='right').fillna(0)
+    df_final = df_r.merge(df_m, on=idx_web, how='outer').sort_values(idx_web).fillna(0)
+    df_final['member_count'] = df_final.groupby('website_name')['new_member_count'].cumsum()
 
     pd_append_sql(con, df_final, "revenue_overview", schema="metric")
 
@@ -111,7 +110,7 @@ def source_revenue(con, order_data_member, order_data):
         .drop(columns='is_member')
     )
 
-    df_final = pd.concat([df1, df2], axis=0)
+    df_final = pd.concat([df1, df2])
     pd_append_sql(con, df_final, "source_revenue", schema="metric")
 
 
@@ -131,25 +130,20 @@ def hourly_revenue(con, order_data):
     pd_append_sql(con, df_final, "hourly_revenue", schema="metric")
 
 
-def daily_members(con, order_data_member, member_data):
-    df_m = member_data\
-        .groupby(idx_web).agg({'member_id': list}).reset_index()
-    df_c = order_data_member\
-        .groupby(idx_web).agg({'member_id': list}).reset_index()
+def member_revenue_info(con, order_data_member, member_data):
+    df_info = website_boolean(order_data_member).merge(
+        member_data, on='member_id', how='left', suffixes=('', '_join'))
+    df_info['is_new_member'] = (df_info['date'] - df_info['date_join']).dt.days <= 30
+    df_info['age'] = ((df_info['date'] - df_info['birth_date']
+                       ).dt.days / 365).round()
+    df_info = assign_age_group(df_info)
+    df_info['age_group'] = df_info['age'].astype(str)
 
-    sql = '''SELECT date, website_name, member_count FROM metric.revenue_overview;'''
-    df_revenue = pd.read_sql(sql, con, parse_dates='date')
+    df_final = basic_metric(df_info, ['date', 'member_id', 'gender', 'age_group',
+                                      'is_online', 'is_new_member'])
+    df_final['age_group'] = df_final['age_group'].replace('nan', pd.NA)
 
-    df_final = df_m.merge(df_c, on=idx_web, how='left')\
-        .merge(df_revenue, on=idx_web, how='left')
-
-    def json_list(x):
-        return str(x if isinstance(x, list) else [])
-    df_final['registered_members'] = df_final['member_id_x'].apply(json_list)
-    df_final['consumed_members'] = df_final['member_id_y'].apply(json_list)
-    df_final.drop(columns=['member_id_x', 'member_id_y'], inplace=True)
-
-    pd_append_sql(con, df_final, "daily_members", schema="metric")
+    pd_append_sql(con, df_final, "member_revenue_info", schema="metric")
 
 
 def member_order_interval(con, order_data_member):
@@ -165,30 +159,34 @@ def member_order_interval(con, order_data_member):
     pd_append_sql(con, df_final, "member_order_interval", schema="metric")
 
 
-def member_revenue_info(con, order_data_member, member_data):
-    df_info = website_boolean(order_data_member).merge(
-        member_data, on='member_id', how='left', suffixes=('', '_join'))
-    df_info['is_new_member'] = (df_info['date'] - df_info['date_join']).dt.days <= 30
-    df_info['age'] = ((df_info['date'] - df_info['birth_date']
-                       ).dt.days / 365).astype(int)
-    bins = [0, 15, 25, 35, 45, 55, 65, 100]  # 設定年齡區間
-    labels = ["<16", "16-25", "26-35", "36-45", "46-55", "56-65", ">65"]
-    df_info['age_group'] = pd.cut(
-        df_info['age'], bins, labels=labels, right=True, include_lowest=True).astype(str)
+def daily_members(con, order_data_member, member_data):
+    df_m = member_data\
+        .groupby(idx_web).agg({'member_id': list}).reset_index()
+    df_c = order_data_member\
+        .groupby(idx_web).agg({'member_id': list}).reset_index()
 
-    df_final = basic_metric(df_info, ['date', 'member_id', 'gender', 'age_group',
-                                      'is_online', 'is_new_member'])
+    sql = '''SELECT date, website_name, member_count FROM metric.revenue_overview;'''
+    df_revenue = pd.read_sql(sql, con, parse_dates='date')
 
-    pd_append_sql(con, df_final, "member_revenue_info", schema="metric")
+    df_final = df_m.merge(df_c, on=idx_web, how='outer')\
+        .merge(df_revenue, on=idx_web, how='outer')
+
+    def json_list(x):
+        return str(x if isinstance(x, list) else [])
+    df_final['registered_members'] = df_final['member_id_x'].apply(json_list)
+    df_final['consumed_members'] = df_final['member_id_y'].apply(json_list)
+    df_final.drop(columns=['member_id_x', 'member_id_y'], inplace=True)
+
+    pd_append_sql(con, df_final, "daily_members", schema="metric")
 
 
 def product_sales(con, purchase_data):
-    # {type}_sales# & {type}_concurrent
+    # {item}_sales# & {item}_concurrent
     from itertools import combinations
     df = website_boolean(purchase_data)
 
-    def type_sales(type_):
-        _id = f'{type_}_id'
+    def item_sales(item):
+        _id = f'{item}_id'
         df_sales = df.groupby(idx_online + [_id])\
             .agg({'sales': 'sum', 'order_id': 'nunique', 'member_id': 'nunique'})\
             .reset_index().rename(columns={**rename_order, 'member_id': 'buyers_count'})
@@ -201,30 +199,28 @@ def product_sales(con, purchase_data):
             for combo in combinations(row['list'], 2):
                 expanded_rows.append({
                     'date': row['date'],
-                    f'{type_}_1': combo[0],
-                    f'{type_}_2': combo[1],
+                    f'{item}_1': combo[0],
+                    f'{item}_2': combo[1],
                     'is_online': row['is_online'],
                     'orders': 1
                 })
 
         expanded_df = pd.DataFrame(expanded_rows)
-        df_concurrent = expanded_df.groupby(idx_online + [f'{type_}_1', f'{type_}_2'])\
+        df_concurrent = expanded_df.groupby(idx_online + [f'{item}_1', f'{item}_2'])\
             .agg('sum').reset_index()
 
         return df_sales, df_concurrent
 
-    for type_ in ['product', 'brand', 'category', 'business']:
-        df_sales, df_concurrent = type_sales(type_)
+    sql = '''SELECT item FROM info.product_item;'''
+    items = pd.read_sql(sql, con)['item']
+    for item in list(items):
+        df_sales, df_concurrent = item_sales(item)
 
-        pd_append_sql(con, df_sales, f"{type_}_sales", schema="metric")
-        pd_append_sql(con, df_concurrent,
-                      f"{type_}_concurrent", schema="metric")
+        pd_append_sql(con, df_sales, f"{item}_sales", schema="metric")
+        pd_append_sql(con, df_concurrent, f"{item}_concurrent", schema="metric")
 
 
 def product_group(con, purchase_data):
-    sql = '''SELECT product_id FROM info.product_info;'''
-    product_data = pd.read_sql(sql, con)
-
     def product_sales_sum(df, index_="product_id"):
         return df.groupby(index_, as_index=False)["sales"].sum()
 
@@ -234,6 +230,8 @@ def product_group(con, purchase_data):
     df_trans = df_trans[df_trans['date'] > (latest_date - pd.DateOffset(years=1))]
 
     # 未購買商品：一年內未被購買的商品
+    sql = '''SELECT product_id FROM info.product_info;'''
+    product_data = pd.read_sql(sql, con)
     non_buy = product_data[~product_data["product_id"].isin(df_trans["product_id"])
                            ]["product_id"].unique()
 
@@ -288,9 +286,9 @@ def main(tenant_id):
         source_revenue(con, order_data_member, order_data)
         store_revenue(con, order_data)
         hourly_revenue(con, order_data)
-        daily_members(con, order_data_member, member_data)
-        member_order_interval(con, order_data_member)
         member_revenue_info(con, order_data_member, member_data)
+        member_order_interval(con, order_data_member)
+        daily_members(con, order_data_member, member_data)
         product_sales(con, purchase_data)
         product_group(con, purchase_data)
 
