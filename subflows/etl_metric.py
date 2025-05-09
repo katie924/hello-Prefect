@@ -21,13 +21,13 @@ class BasicData:
         self.member_data = self.load_member_data(con)
         self.purchase_data = self.load_purchase_data(con)
 
-    def load_order_data(self, con):
+    def load_order_data(self, con) -> pd.DataFrame:
         sql = '''
         SELECT * FROM info.order_record;
         '''
         return pd.read_sql(sql, con, parse_dates=["date"])
 
-    def load_member_data(self, con):
+    def load_member_data(self, con) -> pd.DataFrame:
         sql = '''
         SELECT member_id, city, region, register_date AS date, gender, birth_date, website_name
         FROM info.member_info
@@ -35,7 +35,7 @@ class BasicData:
         '''
         return pd.read_sql(sql, con, parse_dates=["date", "birth_date"])
 
-    def load_purchase_data(self, con):
+    def load_purchase_data(self, con) -> pd.DataFrame:
         sql = '''
         SELECT p.*, b.brand_id, b.category_id, b.business_id
         FROM info.purchase_record AS p
@@ -44,19 +44,26 @@ class BasicData:
         return pd.read_sql(sql, con, parse_dates=["date"])
 
 
-def basic_metric(df: pd.DataFrame, idx: list) -> pd.DataFrame:
+def basic_metric(df: pd.DataFrame, idx: list, agg_type: str = 'all') -> pd.DataFrame:
     """
-    Aggregate {'revenue': 'sum', 'order_id': 'count'} based on given group keys.
+    Perform aggregation on the DataFrame based on the specified grouping keys and aggregation type.
 
     Args:
-        df (pd.DataFrame): Input data
-        idx (list): List of columns to group by
+        df (pd.DataFrame): Input DataFrame containing at least 'revenue' and 'order_id' columns.
+        idx (list): Columns to group by.
+        agg_type (str): Aggregation type.
+            - 'all': Aggregate {'revenue': 'sum', 'order_id': 'count'}, and rename 'order_id' to 'orders'.
+            - 'revenue': Aggregate revenue only.
 
     Returns:
-        pd.DataFrame: Aggregated result, rename 'order_id' to 'orders'
+        pd.DataFrame: Aggregated result.
     """
-    df_ = df.groupby(idx).agg({'revenue': 'sum', 'order_id': 'count'})\
-        .reset_index().rename(columns=rename_order)
+    df_group = df_ = df.groupby(idx, as_index=False)
+    if agg_type == 'all':
+        df_ = df_group.agg({'revenue': 'sum', 'order_id': 'count'})\
+            .rename(columns=rename_order)
+    elif agg_type == 'revenue':
+        df_ = df_group['revenue'].sum()
     return df_
 
 
@@ -94,36 +101,39 @@ def region_revenue(con, order_data_member, member_data):
 
 
 def source_revenue(con, order_data_member, order_data):
-    df1 = (
-        order_data_member.query('website_name != "0"')
-        .groupby(['date', 'source'], as_index=False)['revenue'].sum()
-        .assign(is_online=True)
-    )
+    # 線上會員來源
+    df = order_data_member.query('website_name != "0"').assign(is_online=True)
+    df1 = basic_metric(df, idx_online + ['source'], agg_type='revenue')
 
-    df2 = (
-        order_data.query('website_name == "0"')
-        .groupby(['date', 'is_member'], as_index=False)['revenue'].sum()
-        .assign(
-            source=lambda d: d['is_member'].map({True: '會員', False: '非會員'}),
-            is_online=False
-        )
-        .drop(columns='is_member')
+    # 線下會員/非會員
+    df = order_data.query('website_name == "0"').assign(
+        source=lambda d: d['is_member'].map({True: '會員', False: '非會員'}),
+        is_online=False
     )
+    df2 = basic_metric(df, idx_online + ['source'], agg_type='revenue')
 
     df_final = pd.concat([df1, df2])
     pd_append_sql(con, df_final, "source_revenue", schema="metric")
 
 
 def store_revenue(con, order_data):
-    df_final = order_data.query('website_name == "0"')\
-        .groupby(['date', 'source'], as_index=False)['revenue'].sum()\
+    df = order_data.query('website_name == "0"')
+    df_final = basic_metric(df, ['date', 'source'], agg_type='revenue')\
         .rename(columns={'source': 'store_id'})
 
     pd_append_sql(con, df_final, "store_revenue", schema="metric")
 
 
-def hourly_revenue(con, order_data):
-    df = order_data.copy()[idx_web + ['time', 'revenue', 'order_id']]
+def hourly_revenue_store(con, order_data):
+    df = order_data.query('website_name == "0"').copy()
+    df['hour'] = df['time'].apply(lambda t: t.hour)
+    df_final = basic_metric(df, ['date', 'hour'], agg_type='revenue')
+
+    pd_append_sql(con, df_final, "hourly_revenue_store", schema="metric")
+
+
+def hourly_revenue(con, order_data_member):
+    df = order_data_member.copy()[idx_web + ['time', 'revenue', 'order_id']]
     df['hour'] = df['time'].apply(lambda t: t.hour)
     df_final = basic_metric(df, idx_web + ['hour'])
 
@@ -139,8 +149,8 @@ def member_revenue_info(con, order_data_member, member_data):
     df_info = assign_age_group(df_info)
     df_info['age_group'] = df_info['age'].astype(str)
 
-    df_final = basic_metric(df_info, ['date', 'member_id', 'gender', 'age_group',
-                                      'is_online', 'is_new_member'])
+    df_final = basic_metric(df_info, idx_online + [
+        'member_id', 'gender', 'age_group', 'is_new_member'])
     df_final['age_group'] = df_final['age_group'].replace('nan', pd.NA)
 
     pd_append_sql(con, df_final, "member_revenue_info", schema="metric")
@@ -285,7 +295,8 @@ def main(tenant_id):
         region_revenue(con, order_data_member, member_data)
         source_revenue(con, order_data_member, order_data)
         store_revenue(con, order_data)
-        hourly_revenue(con, order_data)
+        hourly_revenue_store(con, order_data)
+        hourly_revenue(con, order_data_member)
         member_revenue_info(con, order_data_member, member_data)
         member_order_interval(con, order_data_member)
         daily_members(con, order_data_member, member_data)
