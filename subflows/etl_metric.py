@@ -49,7 +49,7 @@ def basic_metric(df: pd.DataFrame, idx: list, agg_type: str = 'all') -> pd.DataF
     Perform aggregation on the DataFrame based on the specified grouping keys and aggregation type.
 
     Args:
-        df (pd.DataFrame): Input DataFrame containing at least 'revenue' and 'order_id' columns.
+        df (pd.DataFrame): Input DataFrame.
         idx (list): Columns to group by.
         agg_type (str): Aggregation type.
             - 'all': Aggregate {'revenue': 'sum', 'order_id': 'count'}, and rename 'order_id' to 'orders'.
