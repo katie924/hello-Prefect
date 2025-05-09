@@ -1,6 +1,6 @@
 import pandas as pd
 
-from lib.utils import connect_post, website_boolean, pd_append_sql, assign_age_group
+from lib.utils import connect_post, pd_append_sql, website_boolean, assign_age_group
 
 rename_order = {'order_id': 'orders'}
 idx_web = ['date', 'website_name']
