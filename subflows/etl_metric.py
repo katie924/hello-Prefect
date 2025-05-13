@@ -70,6 +70,7 @@ def basic_metric(df: pd.DataFrame, idx: list, agg_type: str = 'all') -> pd.DataF
 
 
 def revenue_overview(con, order_data, member_data):
+    # 營業額、訂單數
     df = order_data[idx_web + ['is_member', 'revenue', 'order_id']]
     df_rm = basic_metric(df.query("is_member == True"), idx_web)
     df_rnm = basic_metric(df.query("is_member == False"), idx_web)
@@ -77,6 +78,7 @@ def revenue_overview(con, order_data, member_data):
         .rename(columns={'revenue_x': 'member_revenue', 'orders_x': 'member_orders',
                          'revenue_y': 'not_member_revenue', 'orders_y': 'not_member_orders'})
 
+    # 會員數
     df_m = member_data.groupby(idx_web)['member_id'].agg('count')\
         .reset_index().rename(columns={'member_id': 'new_member_count'})
     df_final = df_r.merge(df_m, on=idx_web, how='outer').sort_values(idx_web).fillna(0)
@@ -90,9 +92,11 @@ def region_revenue(con, order_data_member, member_data):
         idx_online + ['city', 'region', 'revenue', 'order_id', 'member_id']]
     idx_city = idx_online + ['city', 'region']
 
+    # 收貨地區分布: 營業額、訂單數
     df_go = basic_metric(df, idx_city)
     df_go['type'] = 'shipping'
 
+    # 購買人地區: 營業額、訂單數
     df_gm = df.drop(columns=['city', 'region'])\
         .merge(member_data.drop(columns='date'), on='member_id')
     df_gm = basic_metric(df_gm, idx_city)
@@ -103,11 +107,11 @@ def region_revenue(con, order_data_member, member_data):
 
 
 def source_revenue(con, order_data_member, order_data):
-    # 線上會員來源
+    # 線上會員來源: 營業額
     df = order_data_member.query('website_name != "0"').assign(is_online=True)
     df1 = basic_metric(df, idx_online + ['source'], agg_type='revenue')
 
-    # 線下會員/非會員
+    # 線下會員/非會員: 營業額
     df = order_data.query('website_name == "0"').assign(
         source=lambda d: d['is_member'].map({True: '會員', False: '非會員'}),
         is_online=False
@@ -119,6 +123,7 @@ def source_revenue(con, order_data_member, order_data):
 
 
 def store_revenue(con, order_data):
+    # 門市: 營業額
     df = order_data.query('website_name == "0"')
     df_final = basic_metric(df, ['date', 'source'], agg_type='revenue')\
         .rename(columns={'source': 'store_id'})
@@ -127,6 +132,7 @@ def store_revenue(con, order_data):
 
 
 def hourly_revenue_store(con, order_data):
+    # 門市小時: 營業額
     df = order_data.query('website_name == "0"').copy()
     df['hour'] = df['time'].apply(lambda t: t.hour)
     df_final = basic_metric(df, ['date', 'hour'], agg_type='revenue')
@@ -135,6 +141,7 @@ def hourly_revenue_store(con, order_data):
 
 
 def hourly_revenue(con, order_data_member):
+    # 小時: 營業額、訂單數
     df = order_data_member.copy()[idx_web + ['time', 'revenue', 'order_id']]
     df['hour'] = df['time'].apply(lambda t: t.hour)
     df_final = basic_metric(df, idx_web + ['hour'])
@@ -143,6 +150,7 @@ def hourly_revenue(con, order_data_member):
 
 
 def member_revenue_info(con, order_data_member, member_data):
+    # 合併會員資料，紀錄消費當下【性別、是否為新會員、年齡分組】
     df_info = website_boolean(order_data_member).merge(
         member_data, on='member_id', how='left', suffixes=('', '_join'))
     df_info['is_new_member'] = (df_info['date'] - df_info['date_join']).dt.days <= 30
@@ -151,6 +159,7 @@ def member_revenue_info(con, order_data_member, member_data):
     df_info = assign_age_group(df_info)
     df_info['age_group'] = df_info['age'].astype(str)
 
+    # 會員: 營業額、訂單數
     df_final = basic_metric(df_info, idx_online + [
         'member_id', 'gender', 'age_group', 'is_new_member'])
     df_final['age_group'] = df_final['age_group'].replace('nan', pd.NA)
@@ -161,8 +170,10 @@ def member_revenue_info(con, order_data_member, member_data):
 def member_order_interval(con, order_data_member):
     df = order_data_member.copy()[idx_web + ['member_id', 'order_id']]
     df.sort_values(by=['member_id', 'date'], inplace=True)
+    # 訂單: 間隔天數
     df['prev_date'] = df.groupby('member_id')['date'].shift()
     df['interval_all'] = (df['date'] - df['prev_date']).dt.days
+    # 線上/線下訂單: 間隔天數
     df['prev_date'] = df.groupby(['member_id', 'website_name'])['date'].shift()
     df['interval'] = (df['date'] - df['prev_date']).dt.days
     df_final = df.drop(columns=['order_id', 'prev_date'])\
@@ -172,17 +183,20 @@ def member_order_interval(con, order_data_member):
 
 
 def daily_members(con, order_data_member, member_data):
+    # 註冊會員 list
     df_m = member_data\
         .groupby(idx_web).agg({'member_id': list}).reset_index()
+    # 有消費會員 list
     df_c = order_data_member\
         .groupby(idx_web).agg({'member_id': list}).reset_index()
-
+    # 會員數
     sql = '''SELECT date, website_name, member_count FROM metric.revenue_overview;'''
     df_revenue = pd.read_sql(sql, con, parse_dates='date')
 
     df_final = df_m.merge(df_c, on=idx_web, how='outer')\
         .merge(df_revenue, on=idx_web, how='outer')
 
+    # 轉格式 EX: '[]' or '[1, 2, 3]'
     def json_list(x):
         return str(x if isinstance(x, list) else [])
     df_final['registered_members'] = df_final['member_id_x'].apply(json_list)
@@ -199,10 +213,12 @@ def product_sales(con, purchase_data):
 
     def item_sales(item):
         _id = f'{item}_id'
+        # 產品: 銷售額、訂單數、消費人數
         df_sales = df.groupby(idx_online + [_id])\
             .agg({'sales': 'sum', 'order_id': 'nunique', 'member_id': 'nunique'})\
             .reset_index().rename(columns={**rename_order, 'member_id': 'buyers_count'})
 
+        # 同筆訂單同時購買產品
         df_ag = df.groupby(idx_online + ['order_id'])\
             .agg(list=(_id, lambda x: sorted(set(x))), count=(_id, 'nunique'))\
             .reset_index().query('count > 1')
