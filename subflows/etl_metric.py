@@ -51,12 +51,14 @@ def basic_metric(df: pd.DataFrame, idx: list, agg_type: str = 'all') -> pd.DataF
     Args:
         df (pd.DataFrame): Input DataFrame.
         idx (list): Columns to group by.
-        agg_type (str): Aggregation type.
+        agg_type (str): Aggregation type. Default is 'all'.
             - 'all': Aggregate {'revenue': 'sum', 'order_id': 'count'}, and rename 'order_id' to 'orders'.
             - 'revenue': Aggregate revenue only.
 
     Returns:
-        pd.DataFrame: Aggregated result.
+        pd.DataFrame: Aggregated result based on the `agg_type`:
+            - If agg_type == 'all': idx, 'revenue', 'orders'
+            - If agg_type == 'revenue': idx, 'revenue'
     """
     df_group = df_ = df.groupby(idx, as_index=False)
     if agg_type == 'all':
